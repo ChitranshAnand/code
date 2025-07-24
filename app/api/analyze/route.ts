@@ -6,10 +6,22 @@
    ──────────────────────────────────────────────────────────────── */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'     // ← use factory
 import JSZip from 'jszip'
-import { supabase } from '@/lib/supabaseClient'
+
+/** Create a Supabase client *only when the route runs* */
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!url || !key) {
+    throw new Error('Supabase env vars are missing at runtime')
+  }
+  return createClient(url, key)
+}
 
 export async function POST(req: NextRequest) {
+  const supabase = getSupabase()                        // ← runtime client
+
   /* 1. read form‑data */
   const form = await req.formData()
   const file = form.get('file') as File | null
@@ -42,14 +54,8 @@ export async function POST(req: NextRequest) {
   type Msg = { ts: Date; author: string }
   const msgs: Msg[] = []
 
-  /* helper to build a Date safely (DD/MM/YYYY HH:MM AM/PM) */
   function makeDate(
-    d: number,
-    m: number,
-    y: number,
-    h: number,
-    min: number,
-    ampm?: string
+    d: number, m: number, y: number, h: number, min: number, ampm?: string
   ) {
     const year = y < 100 ? 2000 + y : y
     let hour = h
@@ -61,13 +67,10 @@ export async function POST(req: NextRequest) {
   }
 
   chatTxt.split('\n').forEach((raw) => {
-    const line = raw.trim()
-    const m = lineRx.exec(line)
+    const m = lineRx.exec(raw.trim())
     if (!m) return
-
     const [, dd, mm, yy, hh, min, ampm, author] = m
     const ts = makeDate(+dd, +mm, +yy, +hh, +min, ampm)
-
     if (!isNaN(ts.getTime())) msgs.push({ ts, author })
   })
 
@@ -77,17 +80,13 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     )
 
-  /* sort messages chronologically */
   msgs.sort((a, b) => a.ts.getTime() - b.ts.getTime())
 
-  /* ----------  existing code continues below  ---------- */
-
-  /* count msgs per author */
+  /* metrics */
   const counts: Record<string, number> = {}
   for (const { author } of msgs) counts[author] = (counts[author] || 0) + 1
   const totalMessages = msgs.length
 
-  /* participants array sorted by count */
   const participants = Object.entries(counts)
     .sort((a, b) => b[1] - a[1])
     .map(([name, count]) => ({
@@ -99,19 +98,15 @@ export async function POST(req: NextRequest) {
   while (participants.length < 2)
     participants.push({ name: 'Unknown', count: 0, percentage: 0 })
 
-  /* chat period */
   const startDate = msgs[0].ts
-  const endDate = msgs[msgs.length - 1].ts
+  const endDate   = msgs[msgs.length - 1].ts
 
-  /* simple metrics */
-  const daysActive = Math.max(
-    1,
-    (endDate.getTime() - startDate.getTime()) / 86_400_000
-  )
-  const pingFreq = +(totalMessages / daysActive).toFixed(1)
-  const talkRatio = `${participants[0].percentage}:${participants[1].percentage}`
-  const replyRhythm = 2.3 // TODO: real calc
-  const bondOMeter = Math.min(100, Math.round(pingFreq * 4))
+  const daysActive  = Math.max(1,
+    (endDate.getTime() - startDate.getTime()) / 86_400_000)
+  const pingFreq    = +(totalMessages / daysActive).toFixed(1)
+  const talkRatio   = `${participants[0].percentage}:${participants[1].percentage}`
+  const replyRhythm = 2.3
+  const bondOMeter  = Math.min(100, Math.round(pingFreq * 4))
 
   let label = 'Distant'
   if (bondOMeter > 80) label = 'Best Friends'
@@ -123,7 +118,7 @@ export async function POST(req: NextRequest) {
     totalMessages,
     chatPeriod: {
       start: startDate.toISOString(),
-      end: endDate.toISOString(),
+      end:   endDate.toISOString(),
     },
     pingFreq,
     replyRhythm,
@@ -138,8 +133,6 @@ export async function POST(req: NextRequest) {
     .insert({ file_name: file.name, metrics })
     .select()
     .single()
-
-  console.error('🔴 insert.error →', insRes.error)
 
   if (insRes.error)
     return NextResponse.json({ error: insRes.error.message }, { status: 500 })
