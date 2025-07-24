@@ -40,7 +40,7 @@ export default function Home() {
             <HowItWorksItem
               number={2}
               title="AI Analysis"
-              description="Our advanced A.I. analyzes patterns, timings, and conversation dynamics"
+              description="Our advanced AI analyzes patterns, timings, and conversation dynamics"
             />
             <HowItWorksItem
               number={3}
@@ -53,4 +53,3 @@ export default function Home() {
     </div>
   );
 }
-// to do is
